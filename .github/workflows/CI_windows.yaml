@@ -1,0 +1,371 @@
+name: Windows MSIX
+
+on:
+  push:
+    branches:
+      - 'main'
+  repository_dispatch:
+    types: [github_release_update]
+
+concurrency: package_win_msix
+
+jobs:
+  package_windows_msix:
+    name: 'Package Windows .MSIX'
+    runs-on: windows-latest
+    environment: build_package
+    steps:
+    - name: Configuration
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      id: config
+      run: |
+        $DL_BASEDIR = "${{ github.workspace }}\dl"
+        $STAGING_PATH = "${{ github.workspace }}\build"
+        $STAGING_FILES_PATH = "${{ github.workspace }}\build\files"
+        $STAGING_OUTPUTS_PATH = "${{ github.workspace }}\build\_outputs"
+        $UPLOAD_INSTALL_PATH = "${{ github.workspace }}\upload"
+        
+        New-Item -ItemType Directory -Force -Path "$DL_BASEDIR"
+        New-Item -ItemType Directory -Force -Path "$STAGING_PATH"
+        New-Item -ItemType Directory -Force -Path "$STAGING_FILES_PATH"
+        New-Item -ItemType Directory -Force -Path "$STAGING_OUTPUTS_PATH"
+        New-Item -ItemType Directory -Force -Path "$UPLOAD_INSTALL_PATH"
+        
+        echo "DL_BASEDIR=${DL_BASEDIR}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        echo "::set-output name=DL_BASEDIR::${DL_BASEDIR}"
+        echo "::set-output name=STAGING_PATH::${STAGING_PATH}"
+        echo "::set-output name=STAGING_FILES_PATH::${STAGING_FILES_PATH}"
+        echo "::set-output name=STAGING_OUTPUTS_PATH::${STAGING_OUTPUTS_PATH}"
+        echo "UPLOAD_INSTALL_PATH=${UPLOAD_INSTALL_PATH}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        echo "::set-output name=UPLOAD_INSTALL_PATH::${UPLOAD_INSTALL_PATH}"
+        
+        # Get the latest GitHub release info
+        $github_latest_release_url="https://api.github.com/repos/Warzone2100/warzone2100/releases/latest"
+        $Header = @{"Authorization" = ("token ${env:GITHUB_TOKEN}")}
+        $WZ_LATEST_RELEASE_INFO = Invoke-RestMethod -Uri $github_latest_release_url -Method Get -Headers $Header
+
+        $WZ_LATEST_RELEASE_TAG=($WZ_LATEST_RELEASE_INFO.tag_name)
+        echo "WZ_LATEST_RELEASE_TAG=$WZ_LATEST_RELEASE_TAG"
+        echo "::set-output name=WZ_LATEST_RELEASE_TAG::${WZ_LATEST_RELEASE_TAG}"
+  
+        # Get URLs for all assets (architectures) to package
+        $Desired_Asset_Names = @('warzone2100_win_x64_archive.zip')
+        $WZ_LATEST_RELEASE_ASSET_URLS = @()
+        $WZ_LATEST_RELEASE_ASSET_ARCHS = @()
+        foreach ($Desired_Asset_Name in $Desired_Asset_Names)
+        {
+          $WZ_LATEST_RELEASE_ASSET=($WZ_LATEST_RELEASE_INFO.assets | where { $_.name -eq "$Desired_Asset_Name" })
+          $WZ_LATEST_RELEASE_ASSET_URL=($WZ_LATEST_RELEASE_ASSET.url)
+          $WZ_LATEST_RELEASE_ASSET_URLS += "$WZ_LATEST_RELEASE_ASSET_URL"
+          $architecture = [regex]::match($Desired_Asset_Name,'.*warzone2100_win_(.*)_archive.zip$').Groups[1].Value
+          $WZ_LATEST_RELEASE_ASSET_ARCHS += "$architecture"
+          echo "WZ_LATEST_RELEASE_ASSET_URL[$architecture]=$WZ_LATEST_RELEASE_ASSET_URL"
+        }
+        $WZ_LATEST_RELEASE_ASSET_URLS_STR = $WZ_LATEST_RELEASE_ASSET_URLS -join "|"
+        echo "::set-output name=WZ_LATEST_RELEASE_ASSET_URLS::${WZ_LATEST_RELEASE_ASSET_URLS_STR}"
+        $WZ_LATEST_RELEASE_ASSET_ARCHS_STR = $WZ_LATEST_RELEASE_ASSET_ARCHS -join "|"
+        echo "::set-output name=WZ_LATEST_RELEASE_ASSET_ARCHS::${WZ_LATEST_RELEASE_ASSET_ARCHS_STR}"
+        
+        # Configure WZ_REPO_PATH
+        $WZ_REPO_PATH="${{ github.workspace }}\wzmsixpackaging"
+        echo "WZ_REPO_PATH=${WZ_REPO_PATH}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        echo "::set-output name=WZ_REPO_PATH::${WZ_REPO_PATH}"
+    - name: Check Release Version
+      id: version
+      shell: bash
+      env:
+        WZ_LATEST_RELEASE_TAG: ${{ steps.config.outputs.WZ_LATEST_RELEASE_TAG }}
+      run: |
+        # Verify tag format (three-component version)
+        regex="^([1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$";
+        if [[ ! "${WZ_LATEST_RELEASE_TAG}" =~ $regex ]]; then
+          echo "Invalid tag version format: \"${WZ_LATEST_RELEASE_TAG}\""
+          exit 1
+        fi
+        echo "Valid tag release version format: \"${WZ_LATEST_RELEASE_TAG}\""
+        echo "::set-output name=WZ_RELEASE_SEMVER::${WZ_LATEST_RELEASE_TAG}"
+        WZ_PACKAGING_VERSION="${WZ_LATEST_RELEASE_TAG}.0"
+        echo "::set-output name=WZ_PACKAGING_VERSION::${WZ_PACKAGING_VERSION}"
+    - uses: actions/checkout@v2
+      with:
+        path: 'wzmsixpackaging'
+        submodules: recursive
+    - name: Download & stage the latest Release Windows files
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        WZ_LATEST_RELEASE_ASSETS_URLS_STR: ${{ steps.config.outputs.WZ_LATEST_RELEASE_ASSET_URLS }}
+        WZ_LATEST_RELEASE_ASSETS_ARCHS_STR: ${{ steps.config.outputs.WZ_LATEST_RELEASE_ASSET_ARCHS }}
+        STAGING_PATH: ${{ steps.config.outputs.STAGING_PATH }}
+        STAGING_FILES_PATH: ${{ steps.config.outputs.STAGING_FILES_PATH }}
+      run: |
+        Start-Sleep -Milliseconds 1 # See: https://stackoverflow.com/a/49859001
+        
+        $VerbosePreference = "Continue"
+        $InformationPreference = "Continue"
+        . "${env:WZ_REPO_PATH}\.ci\powershell\request.ps1"
+        . "${env:WZ_REPO_PATH}\.ci\powershell\checkWZFiles.ps1"
+        . "${env:WZ_REPO_PATH}\.ci\powershell\importVCvars.ps1"
+        $VISUAL_STUDIO_INSTALL_PATH = & "vswhere.exe" -latest -property installationPath
+        Import-VCVarsEnv "${VISUAL_STUDIO_INSTALL_PATH}" "-arch=x64 -host_arch=x64"
+        
+        $WZ_LATEST_RELEASE_ASSETS_URLS = ${env:WZ_LATEST_RELEASE_ASSETS_URLS_STR}.Split('|')
+        echo "WZ_LATEST_RELEASE_ASSETS_URLS = $WZ_LATEST_RELEASE_ASSETS_URLS"
+        $WZ_LATEST_RELEASE_ASSETS_ARCHS = ${env:WZ_LATEST_RELEASE_ASSETS_ARCHS_STR}.Split('|')
+        echo "WZ_LATEST_RELEASE_ASSETS_ARCHS = $WZ_LATEST_RELEASE_ASSETS_ARCHS"
+        
+        $IsFirstAsset = $true
+        for ($i=0; $i -lt ($WZ_LATEST_RELEASE_ASSETS_URLS.count); $i++)
+        {
+          $Release_Asset_Url = $WZ_LATEST_RELEASE_ASSETS_URLS[$i]
+          $Release_Asset_Arch = $WZ_LATEST_RELEASE_ASSETS_ARCHS[$i]
+          $WINARCHIVE_DL_PATH = "${env:DL_BASEDIR}\windows-archive.zip"
+          if (Test-Path "$WINARCHIVE_DL_PATH") { Remove-Item "$WINARCHIVE_DL_PATH" -Force }
+          $WINARCHIVE_DL_URL="$Release_Asset_Url"
+          echo "::group::Download Archive ($Release_Asset_Arch)"
+          Write-Host "Architecture: `"$Release_Asset_Arch`""
+          Write-Host "Original Url: `"${WINARCHIVE_DL_URL}`""
+          $url = Get-RedirectedUrl "${WINARCHIVE_DL_URL}"
+          Write-Host "Redirected Url: `"$url`""
+          $req = Req -Params @{ 'Method'='GET';'Uri'="$url";'OutFile'="$WINARCHIVE_DL_PATH";'Headers'=@{'Accept' = 'application/octet-stream'; "Authorization" = ("token ${env:GITHUB_TOKEN}")} } -Retries 3 -SecondsDelay 10
+          echo "::endgroup::"
+        
+          # Extract the ZIP file to a temporary location
+          echo "::group::Extract Archive ($Release_Asset_Arch)"
+          $TmpExtractLocation = "${env:DL_BASEDIR}\tmp_extract"
+          if (Test-Path "$TmpExtractLocation") { Remove-Item "$TmpExtractLocation" -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path "$TmpExtractLocation"
+          Expand-Archive -LiteralPath "$WINARCHIVE_DL_PATH" -DestinationPath "$TmpExtractLocation"
+          Remove-Item "$WINARCHIVE_DL_PATH" -Force
+          echo "::endgroup::"
+          
+          # Check the extracted ZIP file contents
+          echo "::group::Check Archive ($Release_Asset_Arch)"
+          $check_result = Check-WZArchiveContents "$TmpExtractLocation"
+          echo "Check result: $check_result"
+          if (-not $check_result) {
+            Write-Error "Failed check of archive contents for arch: $Release_Asset_Arch"
+            exit 1
+          }
+          echo "::endgroup::"
+          
+          # Copy the necessary parts to the staging directory
+          if ($IsFirstAsset) {
+            # Copy the entirety of the archive (the first architecture's asset URL is used to stage all data and other files as well)
+            $fileList = @(Get-ChildItem -Path "$($TmpExtractLocation)" -File -Recurse)
+            $dirList = @(Get-ChildItem -Path "$($TmpExtractLocation)" -Directory -Recurse)
+          }
+          else {
+            # Only copy the bin folder contents into an architecture-specific subdirectory
+            $fileList = @(Get-ChildItem -Path (Join-Path "$($TmpExtractLocation)" "bin") -File -Recurse)
+            $dirList = @(Get-ChildItem -Path (Join-Path "$($TmpExtractLocation)" "bin") -Directory -Recurse)
+          }
+          
+          foreach ($dirPath in $dirList)
+          {
+            $destinationDirPath = $($dirPath.FullName).Replace("$TmpExtractLocation", "${env:STAGING_FILES_PATH}")
+            if ($destinationDirPath.StartsWith($(Join-Path "${env:STAGING_FILES_PATH}" "bin"))) {
+              # Move the contents of the bin directory into a subdirectory by architecture
+              $destinationDirPath = ($destinationDirPath).Replace($(Join-Path "${env:STAGING_FILES_PATH}" "bin"), $(Join-Path "${env:STAGING_FILES_PATH}" "bin" "$Release_Asset_Arch"))
+            }
+            New-Item "$destinationDirPath" -ItemType Directory -ea SilentlyContinue | Out-Null
+          }
+          foreach ($file in $fileList)
+          {
+            $filePath = $(Split-Path $($file.FullName))
+            $destinationPath = $filePath.Replace("$TmpExtractLocation", "${env:STAGING_FILES_PATH}")
+            if ($filePath.StartsWith($(Join-Path "$TmpExtractLocation" "bin"))) {
+              # Move the contents of the bin directory into a subdirectory by architecture
+              $destinationPath = $filePath.Replace($(Join-Path "$TmpExtractLocation" "bin"), $(Join-Path "${env:STAGING_FILES_PATH}" "bin" "$Release_Asset_Arch"))
+            }
+            Move-Item -Path "$($file.FullName)" -Destination "$destinationPath" -Force -ErrorAction Stop
+          }
+          
+          if ($IsFirstAsset) {
+            # Verify that all files were moved - should only be empty folders remaining
+            $fileList = @(Get-ChildItem -Path "$($TmpExtractLocation)" -File -Recurse)
+            if ($fileList.count > 0) {
+              Write-Error "Failed - there are files remaining that weren't moved!"
+              Write-Output "$fileList"
+              exit 1
+            }
+          }
+          
+          # Remove temporary extracted folder
+          Write-Host "Deleting temporary extraction folder: '$($TmpExtractLocation)'"
+          Remove-Item "$TmpExtractLocation" -Recurse -Force -ErrorAction Stop
+          
+          $IsFirstAsset = $false
+        }
+        
+        Write-Host "Finished staging release files"
+        
+        echo "::group::Debug Output (Staging Files Directory)"
+        Get-ChildItem -Path "${env:STAGING_FILES_PATH}" –Recurse
+        echo "::endgroup::"
+    - name: Download + stage sequences.wz
+      id: sequences
+      env:
+        STAGING_PATH: ${{ steps.config.outputs.STAGING_PATH }}
+      run: |
+        Start-Sleep -Milliseconds 1 # See: https://stackoverflow.com/a/49859001
+        
+        $VerbosePreference = "Continue"
+        . "${env:WZ_REPO_PATH}\.ci\powershell\request.ps1"
+        
+        $SEQUENCES_DL_PATH="${env:DL_BASEDIR}\sequences.wz"
+        $SEQUENCES_DL_URL="https://github.com/Warzone2100/wz-sequences/releases/download/v3/high-quality-en-sequences.wz"
+        $SEQUENCES_DL_SHA256="90ff552ca4a70e2537e027e22c5098ea4ed1bc11bb7fc94138c6c941a73d29fa"
+        $req = Req -Params @{ 'Method'='GET';'Uri'="$SEQUENCES_DL_URL";'OutFile'="$SEQUENCES_DL_PATH" } -Retries 3 -SecondsDelay 10
+        
+        # Verify SHA256 hash
+        $sequences_wz_hash = Get-FileHash -Path "$SEQUENCES_DL_PATH" -Algorithm SHA256
+        If ($sequences_wz_hash.Hash -eq ${SEQUENCES_DL_SHA256}) {
+          Write-Output "Verified downloaded sequences.wz SHA256"
+        } Else {
+          Write-Error "The downloaded sequences.wz hash `n`t'$($sequences_wz_hash.Hash)'`ndoes not match the expected hash: `n`t'${SEQUENCES_DL_SHA256}'"
+          exit 1
+        }
+        
+        # Move sequences.wz to the staging directory
+        $STAGING_SEQUENCES_PATH = $(Join-Path "${env:STAGING_PATH}" "sequences")
+        New-Item -ItemType Directory -Force -Path "${STAGING_SEQUENCES_PATH}"
+        Move-Item -LiteralPath "${SEQUENCES_DL_PATH}" -Destination "${STAGING_SEQUENCES_PATH}"
+        echo "::set-output name=STAGING_SEQUENCES_PATH::${STAGING_SEQUENCES_PATH}"
+    - name: Stage the packaging files
+      working-directory: '.\wzmsixpackaging'
+      shell: cmd
+      env:
+        STAGING_PATH: ${{ steps.config.outputs.STAGING_PATH }}
+      run: |
+        XCopy "packaging" "%STAGING_PATH%" /E /C /I /F /R /Y
+    - name: Configuration for Windows Defender
+      run: |
+        Remove-MpPreference -ExclusionPath (Get-MpPreference).ExclusionPath
+        Set-Service -Name wuauserv -StartupType Manual -Status Running
+    - name: Update Windows Defender definitions
+      shell: cmd
+      run: |
+        "C:\Program Files\Windows Defender\MpCmdRun.exe" -SignatureUpdate
+    - name: AV Scan Windows staging directory
+      shell: cmd
+      env:
+        STAGING_PATH: ${{ steps.config.outputs.STAGING_PATH }}
+      run: |
+        "C:\Program Files\Windows Defender\MpCmdRun.exe" -Scan -ScanType 3 -File "%STAGING_PATH%"
+    - name: Package .msixbundle
+      id: package-msixbundle
+      working-directory: ${{ steps.config.outputs.STAGING_PATH }}
+      env:
+        WZ_PACKAGING_VERSION: ${{ steps.version.outputs.WZ_PACKAGING_VERSION }}
+        IDENTITY_NAME: ${{ secrets.MS_PACKAGE_IDENTITY_NAME }}
+        IDENTITY_PUBLISHER: ${{ secrets.MS_PACKAGE_IDENTITY_PUBLISHER }}
+        PACKAGE_DISPLAYNAME: ${{ secrets.MS_PACKAGE_DISPLAYNAME }}
+        PACKAGE_PUBLISHERDISPLAYNAME: ${{ secrets.MS_PACKAGE_PUBLISHERDISPLAYNAME }}
+        STAGING_OUTPUTS_PATH: ${{ steps.config.outputs.STAGING_OUTPUTS_PATH }}
+      run: |
+        . "${env:WZ_REPO_PATH}\.ci\powershell\importVCvars.ps1"
+        $VISUAL_STUDIO_INSTALL_PATH = & "vswhere.exe" -latest -property installationPath
+        Import-VCVarsEnv "${VISUAL_STUDIO_INSTALL_PATH}" "-arch=x64 -host_arch=x64"
+        
+        echo "Generating appxmanifest"
+        .\generate_appxmanifest.ps1 -IdentityName "${env:IDENTITY_NAME}" -IdentityPublisher "${env:IDENTITY_PUBLISHER}" -PackageDisplayName "${env:PACKAGE_DISPLAYNAME}" -PackagePublisherDisplayName "${env:PACKAGE_PUBLISHERDISPLAYNAME}"
+        
+        echo "::group::Making resources.pri"
+        MakePri.exe new /pr resources /cf resources.pri.xml /mn AppXManifest.xml /of resources.pri
+        echo "::endgroup::"
+        
+        echo "::group::Packaging .msixbundle"
+        echo "PackagingVersion=${env:WZ_PACKAGING_VERSION}"
+        makeappx.exe build /f PackagingLayout.xml /op .\ /pv "${env:WZ_PACKAGING_VERSION}" /bv "${env:WZ_PACKAGING_VERSION}"
+        echo "::endgroup::"
+        
+        $MSIX_OUTPUT_FILENAME = "Warzone2100_${env:WZ_PACKAGING_VERSION}.msixbundle"
+        $MSIX_OUTPUT_FULLPATH = $(Join-Path "${env:STAGING_OUTPUTS_PATH}" "${MSIX_OUTPUT_FILENAME}")
+        Move-Item -LiteralPath ".\Warzone2100.msixbundle" -Destination "${MSIX_OUTPUT_FULLPATH}"
+        
+        Write-Host "${MSIX_OUTPUT_FILENAME}`n`t-> SHA512: $((Get-FileHash -LiteralPath "${MSIX_OUTPUT_FULLPATH}" -Algorithm SHA512).Hash)`n`t`-> Size (bytes): $((Get-Item -LiteralPath "${MSIX_OUTPUT_FULLPATH}").Length)"
+        echo "::set-output name=MSIX_OUTPUT_FULLPATH::${MSIX_OUTPUT_FULLPATH}"
+    - name: Package .appxsym files
+      working-directory: ${{ steps.config.outputs.STAGING_PATH }}
+      env:
+        WZ_PACKAGING_VERSION: ${{ steps.version.outputs.WZ_PACKAGING_VERSION }}
+        WZ_LATEST_RELEASE_ASSETS_ARCHS_STR: ${{ steps.config.outputs.WZ_LATEST_RELEASE_ASSET_ARCHS }}
+        STAGING_FILES_PATH: ${{ steps.config.outputs.STAGING_FILES_PATH }}
+        STAGING_OUTPUTS_PATH: ${{ steps.config.outputs.STAGING_OUTPUTS_PATH }}
+      run: |
+        $WZ_LATEST_RELEASE_ASSETS_ARCHS = ${env:WZ_LATEST_RELEASE_ASSETS_ARCHS_STR}.Split('|')
+        echo "WZ_LATEST_RELEASE_ASSETS_ARCHS = $WZ_LATEST_RELEASE_ASSETS_ARCHS"
+        
+        foreach ($arch in $WZ_LATEST_RELEASE_ASSETS_ARCHS)
+        {
+          echo "::group::Packaging .appxsym (${arch})"
+          $PDB_PATH = $(Join-Path "${env:STAGING_FILES_PATH}" "bin" "${arch}" "warzone2100.pdb")
+          if (-not (Test-Path "${PDB_PATH}"))
+          {
+            Write-Error "Failed to find expected PDB file: ${PDB_PATH}"
+            exit 1
+          }
+          $APPXSYM_OUTPUT_FILENAME = "Warzone2100_${env:WZ_PACKAGING_VERSION}_${arch}.appxsym"
+          $APPXSYM_OUTPUT_PATH = "$(Join-Path "${env:STAGING_OUTPUTS_PATH}" "${APPXSYM_OUTPUT_FILENAME}")"
+          Compress-Archive -Path "${PDB_PATH}" -DestinationPath "${APPXSYM_OUTPUT_PATH}"
+          Write-Host "${APPXSYM_OUTPUT_FILENAME}`n`t-> SHA512: $((Get-FileHash -LiteralPath "${APPXSYM_OUTPUT_PATH}" -Algorithm SHA512).Hash)`n`t`-> Size (bytes): $((Get-Item -LiteralPath "${APPXSYM_OUTPUT_PATH}").Length)"
+          echo "::endgroup::"
+        }
+    - name: Clean-up Some Staging Files
+      env:
+        STAGING_SEQUENCES_PATH: ${{ steps.sequences.outputs.STAGING_SEQUENCES_PATH }}
+        STAGING_FILES_PATH: ${{ steps.config.outputs.STAGING_FILES_PATH }}
+      run: |
+        Remove-Item "${env:STAGING_SEQUENCES_PATH}" -Recurse -Force -ErrorAction Stop
+        Remove-Item "${env:STAGING_FILES_PATH}" -Recurse -Force -ErrorAction Stop
+    - name: 'Validate App (appcert.exe)'
+      env:
+        STAGING_PATH: ${{ steps.config.outputs.STAGING_PATH }}
+        MSIX_OUTPUT_FULLPATH: ${{ steps.package-msixbundle.outputs.MSIX_OUTPUT_FULLPATH }}
+      run: |
+        $APPCERT_PATH = "C:\Program Files (x86)\Windows Kits\10\App Certification Kit\appcert.exe"
+        if (-not (Test-Path "${APPCERT_PATH}"))
+        {
+          Write-Error "Failed to find path to appcert.exe"
+          exit 1
+        }
+        $ReportOutputPath = $(Join-Path "${env:STAGING_PATH}" cert_report.xml)
+        Start-Process -FilePath "${APPCERT_PATH}" -ArgumentList 'test','-appxpackagepath',"${env:MSIX_OUTPUT_FULLPATH}",'-reportoutputpath',"${ReportOutputPath}" -Wait
+        $OverallResult = $((Select-Xml -Path "${ReportOutputPath}" -XPath "REPORT/@OVERALL_RESULT").node."#text")
+        Write-Host "Validation result: $OverallResult"
+        if ($OverallResult -ne "PASS")
+        {
+          Write-Error "Validation failed"
+          exit 1
+        }
+    - name: Collect Validation Logs (on Failure)
+      uses: actions/upload-artifact@v2
+      if: failure()
+      with:
+        name: validation_report
+        path: '${{ steps.config.outputs.STAGING_PATH }}\cert_report.xml'
+        if-no-files-found: 'warn'
+    - name: Package .msixupload
+      id: package-msixupload
+      env:
+        STAGING_OUTPUTS_PATH: ${{ steps.config.outputs.STAGING_OUTPUTS_PATH }}
+        WZ_PACKAGING_VERSION: ${{ steps.version.outputs.WZ_PACKAGING_VERSION }}
+      run: |
+        $MSIXUPLOAD_FILENAME = "Warzone2100_${env:WZ_PACKAGING_VERSION}.msixupload"
+        $MSIXUPLOAD_OUTPUT_PATH = $(Join-Path "${env:UPLOAD_INSTALL_PATH}" "${MSIXUPLOAD_FILENAME}")
+        Compress-Archive -Path "${env:STAGING_OUTPUTS_PATH}\*.*" -DestinationPath "${MSIXUPLOAD_OUTPUT_PATH}"
+        echo "::set-output name=MSIXUPLOAD_OUTPUT_PATH::${MSIXUPLOAD_OUTPUT_PATH}"
+        Write-Host "${MSIXUPLOAD_FILENAME}`n`t-> SHA512: $((Get-FileHash -LiteralPath "${MSIXUPLOAD_OUTPUT_PATH}" -Algorithm SHA512).Hash)`n`t`-> Size (bytes): $((Get-Item -LiteralPath "${MSIXUPLOAD_OUTPUT_PATH}").Length)"
+    - name: Clean-up Some Staging Files
+      env:
+        STAGING_OUTPUTS_PATH: ${{ steps.config.outputs.STAGING_OUTPUTS_PATH }}
+      run: |
+        Remove-Item "${env:STAGING_OUTPUTS_PATH}" -Recurse -Force -ErrorAction Stop
+    - name: Upload .msixupload artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: msixupload
+        path: '${{ steps.package-msixupload.outputs.MSIXUPLOAD_OUTPUT_PATH }}'
+        if-no-files-found: 'error'
+        retention-days: 5
