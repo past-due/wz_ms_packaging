@@ -1,3 +1,3 @@
 [submodule "packaging"]
 	path = packaging
-	url = https://github.com/past-due/wz_msix.git
+	url = https://github.com/wz-packaging/wz-msix.git
