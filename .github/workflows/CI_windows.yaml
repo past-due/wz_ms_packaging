@@ -87,7 +87,7 @@ jobs:
         echo "WZ_RELEASE_SEMVER=${WZ_LATEST_RELEASE_TAG}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         WZ_PACKAGING_VERSION="${WZ_LATEST_RELEASE_TAG}.0"
         echo "WZ_PACKAGING_VERSION=${WZ_PACKAGING_VERSION}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
       with:
         path: 'wzmsixpackaging'
         submodules: recursive
@@ -340,7 +340,7 @@ jobs:
           exit 1
         }
     - name: Collect Validation Logs (on Failure)
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       if: failure()
       with:
         name: validation_report
@@ -363,7 +363,7 @@ jobs:
       run: |
         Remove-Item "${env:STAGING_OUTPUTS_PATH}" -Recurse -Force -ErrorAction Stop
     - name: Upload .msixupload artifact
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       with:
         name: msixupload
         path: '${{ steps.package-msixupload.outputs.MSIXUPLOAD_OUTPUT_PATH }}'
