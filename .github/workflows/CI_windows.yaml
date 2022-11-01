@@ -52,7 +52,7 @@ jobs:
         echo "WZ_LATEST_RELEASE_TAG=${WZ_LATEST_RELEASE_TAG}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
   
         # Get URLs for all assets (architectures) to package
-        $Desired_Asset_Names = @('warzone2100_win_x64_archive.zip')
+        $Desired_Asset_Names = @('warzone2100_win_x64_archive.zip','warzone2100_win_arm64_archive.zip')
         $WZ_LATEST_RELEASE_ASSET_URLS = @()
         $WZ_LATEST_RELEASE_ASSET_ARCHS = @()
         foreach ($Desired_Asset_Name in $Desired_Asset_Names)
