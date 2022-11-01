@@ -33,12 +33,12 @@ jobs:
         New-Item -ItemType Directory -Force -Path "$UPLOAD_INSTALL_PATH"
         
         echo "DL_BASEDIR=${DL_BASEDIR}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-        echo "::set-output name=DL_BASEDIR::${DL_BASEDIR}"
-        echo "::set-output name=STAGING_PATH::${STAGING_PATH}"
-        echo "::set-output name=STAGING_FILES_PATH::${STAGING_FILES_PATH}"
-        echo "::set-output name=STAGING_OUTPUTS_PATH::${STAGING_OUTPUTS_PATH}"
+        echo "DL_BASEDIR=${DL_BASEDIR}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        echo "STAGING_PATH=${STAGING_PATH}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        echo "STAGING_FILES_PATH=${STAGING_FILES_PATH}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        echo "STAGING_OUTPUTS_PATH=${STAGING_OUTPUTS_PATH}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         echo "UPLOAD_INSTALL_PATH=${UPLOAD_INSTALL_PATH}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-        echo "::set-output name=UPLOAD_INSTALL_PATH::${UPLOAD_INSTALL_PATH}"
+        echo "UPLOAD_INSTALL_PATH=${UPLOAD_INSTALL_PATH}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         
         # Get the latest GitHub release info
         $github_latest_release_url="https://api.github.com/repos/Warzone2100/warzone2100/releases/latest"
@@ -47,7 +47,7 @@ jobs:
 
         $WZ_LATEST_RELEASE_TAG=($WZ_LATEST_RELEASE_INFO.tag_name)
         echo "WZ_LATEST_RELEASE_TAG=$WZ_LATEST_RELEASE_TAG"
-        echo "::set-output name=WZ_LATEST_RELEASE_TAG::${WZ_LATEST_RELEASE_TAG}"
+        echo "WZ_LATEST_RELEASE_TAG=${WZ_LATEST_RELEASE_TAG}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
   
         # Get URLs for all assets (architectures) to package
         $Desired_Asset_Names = @('warzone2100_win_x64_archive.zip')
@@ -63,14 +63,14 @@ jobs:
           echo "WZ_LATEST_RELEASE_ASSET_URL[$architecture]=$WZ_LATEST_RELEASE_ASSET_URL"
         }
         $WZ_LATEST_RELEASE_ASSET_URLS_STR = $WZ_LATEST_RELEASE_ASSET_URLS -join "|"
-        echo "::set-output name=WZ_LATEST_RELEASE_ASSET_URLS::${WZ_LATEST_RELEASE_ASSET_URLS_STR}"
+        echo "WZ_LATEST_RELEASE_ASSET_URLS=${WZ_LATEST_RELEASE_ASSET_URLS_STR}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         $WZ_LATEST_RELEASE_ASSET_ARCHS_STR = $WZ_LATEST_RELEASE_ASSET_ARCHS -join "|"
-        echo "::set-output name=WZ_LATEST_RELEASE_ASSET_ARCHS::${WZ_LATEST_RELEASE_ASSET_ARCHS_STR}"
+        echo "WZ_LATEST_RELEASE_ASSET_ARCHS=${WZ_LATEST_RELEASE_ASSET_ARCHS_STR}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         
         # Configure WZ_REPO_PATH
         $WZ_REPO_PATH="${{ github.workspace }}\wzmsixpackaging"
         echo "WZ_REPO_PATH=${WZ_REPO_PATH}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-        echo "::set-output name=WZ_REPO_PATH::${WZ_REPO_PATH}"
+        echo "WZ_REPO_PATH=${WZ_REPO_PATH}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
     - name: Check Release Version
       id: version
       shell: bash
@@ -84,9 +84,9 @@ jobs:
           exit 1
         fi
         echo "Valid tag release version format: \"${WZ_LATEST_RELEASE_TAG}\""
-        echo "::set-output name=WZ_RELEASE_SEMVER::${WZ_LATEST_RELEASE_TAG}"
+        echo "WZ_RELEASE_SEMVER=${WZ_LATEST_RELEASE_TAG}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         WZ_PACKAGING_VERSION="${WZ_LATEST_RELEASE_TAG}.0"
-        echo "::set-output name=WZ_PACKAGING_VERSION::${WZ_PACKAGING_VERSION}"
+        echo "WZ_PACKAGING_VERSION=${WZ_PACKAGING_VERSION}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
     - uses: actions/checkout@v2
       with:
         path: 'wzmsixpackaging'
@@ -231,7 +231,7 @@ jobs:
         $STAGING_SEQUENCES_PATH = $(Join-Path "${env:STAGING_PATH}" "sequences")
         New-Item -ItemType Directory -Force -Path "${STAGING_SEQUENCES_PATH}"
         Move-Item -LiteralPath "${SEQUENCES_DL_PATH}" -Destination "${STAGING_SEQUENCES_PATH}"
-        echo "::set-output name=STAGING_SEQUENCES_PATH::${STAGING_SEQUENCES_PATH}"
+        echo "STAGING_SEQUENCES_PATH=${STAGING_SEQUENCES_PATH}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
     - name: Stage the packaging files
       working-directory: '.\wzmsixpackaging'
       shell: cmd
@@ -285,7 +285,7 @@ jobs:
         Move-Item -LiteralPath ".\Warzone2100.msixbundle" -Destination "${MSIX_OUTPUT_FULLPATH}"
         
         Write-Host "${MSIX_OUTPUT_FILENAME}`n`t-> SHA512: $((Get-FileHash -LiteralPath "${MSIX_OUTPUT_FULLPATH}" -Algorithm SHA512).Hash)`n`t`-> Size (bytes): $((Get-Item -LiteralPath "${MSIX_OUTPUT_FULLPATH}").Length)"
-        echo "::set-output name=MSIX_OUTPUT_FULLPATH::${MSIX_OUTPUT_FULLPATH}"
+        echo "MSIX_OUTPUT_FULLPATH=${MSIX_OUTPUT_FULLPATH}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
     - name: Package .appxsym files
       working-directory: ${{ steps.config.outputs.STAGING_PATH }}
       env:
@@ -355,7 +355,7 @@ jobs:
         $MSIXUPLOAD_FILENAME = "Warzone2100_${env:WZ_PACKAGING_VERSION}.msixupload"
         $MSIXUPLOAD_OUTPUT_PATH = $(Join-Path "${env:UPLOAD_INSTALL_PATH}" "${MSIXUPLOAD_FILENAME}")
         Compress-Archive -Path "${env:STAGING_OUTPUTS_PATH}\*.*" -DestinationPath "${MSIXUPLOAD_OUTPUT_PATH}"
-        echo "::set-output name=MSIXUPLOAD_OUTPUT_PATH::${MSIXUPLOAD_OUTPUT_PATH}"
+        echo "MSIXUPLOAD_OUTPUT_PATH=${MSIXUPLOAD_OUTPUT_PATH}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         Write-Host "${MSIXUPLOAD_FILENAME}`n`t-> SHA512: $((Get-FileHash -LiteralPath "${MSIXUPLOAD_OUTPUT_PATH}" -Algorithm SHA512).Hash)`n`t`-> Size (bytes): $((Get-Item -LiteralPath "${MSIXUPLOAD_OUTPUT_PATH}").Length)"
     - name: Clean-up Some Staging Files
       env:
