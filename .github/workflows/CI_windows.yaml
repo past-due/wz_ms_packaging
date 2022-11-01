@@ -86,9 +86,9 @@ jobs:
           exit 1
         fi
         echo "Valid tag release version format: \"${WZ_LATEST_RELEASE_TAG}\""
-        echo "WZ_RELEASE_SEMVER=${WZ_LATEST_RELEASE_TAG}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        echo "WZ_RELEASE_SEMVER=${WZ_LATEST_RELEASE_TAG}" >> $GITHUB_OUTPUT
         WZ_PACKAGING_VERSION="${WZ_LATEST_RELEASE_TAG}.0"
-        echo "WZ_PACKAGING_VERSION=${WZ_PACKAGING_VERSION}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        echo "WZ_PACKAGING_VERSION=${WZ_PACKAGING_VERSION}" >> $GITHUB_OUTPUT
     - uses: actions/checkout@v3
       with:
         path: 'wzmsixpackaging'
