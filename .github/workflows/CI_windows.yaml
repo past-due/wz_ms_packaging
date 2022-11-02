@@ -160,7 +160,8 @@ jobs:
           else {
             # Only copy the bin folder contents into an architecture-specific subdirectory
             $fileList = @(Get-ChildItem -Path (Join-Path "$($TmpExtractLocation)" "bin") -File -Recurse)
-            $dirList = @(Get-ChildItem -Path (Join-Path "$($TmpExtractLocation)" "bin") -Directory -Recurse)
+            $dirList = @(Get-Item -Path (Join-Path "$($TmpExtractLocation)" "bin"))
+            $dirList += @(Get-ChildItem -Path (Join-Path "$($TmpExtractLocation)" "bin") -Directory -Recurse)
           }
           
           foreach ($dirPath in $dirList)
