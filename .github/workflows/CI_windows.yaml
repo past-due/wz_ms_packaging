@@ -53,19 +53,18 @@ jobs:
   
         # Get URLs for all assets (architectures) to package
         $Desired_Asset_Names = @('warzone2100_win_x64_archive.zip','warzone2100_win_arm64_archive.zip')
-        $WZ_LATEST_RELEASE_ASSET_URLS = @()
+        $WZ_LATEST_RELEASE_ASSET_NAMES = @()
         $WZ_LATEST_RELEASE_ASSET_ARCHS = @()
         foreach ($Desired_Asset_Name in $Desired_Asset_Names)
         {
           $WZ_LATEST_RELEASE_ASSET=($WZ_LATEST_RELEASE_INFO.assets | where { $_.name -eq "$Desired_Asset_Name" })
-          $WZ_LATEST_RELEASE_ASSET_URL=($WZ_LATEST_RELEASE_ASSET.url)
-          $WZ_LATEST_RELEASE_ASSET_URLS += "$WZ_LATEST_RELEASE_ASSET_URL"
+          $WZ_LATEST_RELEASE_ASSET_NAMES += "$Desired_Asset_Name"
           $architecture = [regex]::match($Desired_Asset_Name,'.*warzone2100_win_(.*)_archive.zip$').Groups[1].Value
           $WZ_LATEST_RELEASE_ASSET_ARCHS += "$architecture"
-          echo "WZ_LATEST_RELEASE_ASSET_URL[$architecture]=$WZ_LATEST_RELEASE_ASSET_URL"
+          echo "$architecture=$Desired_Asset_Name"
         }
-        $WZ_LATEST_RELEASE_ASSET_URLS_STR = $WZ_LATEST_RELEASE_ASSET_URLS -join "|"
-        echo "WZ_LATEST_RELEASE_ASSET_URLS=${WZ_LATEST_RELEASE_ASSET_URLS_STR}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        $WZ_LATEST_RELEASE_ASSET_NAMES_STR = $WZ_LATEST_RELEASE_ASSET_NAMES -join "|"
+        echo "WZ_LATEST_RELEASE_ASSET_NAMES=${WZ_LATEST_RELEASE_ASSET_NAMES_STR}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         $WZ_LATEST_RELEASE_ASSET_ARCHS_STR = $WZ_LATEST_RELEASE_ASSET_ARCHS -join "|"
         echo "WZ_LATEST_RELEASE_ASSET_ARCHS=${WZ_LATEST_RELEASE_ASSET_ARCHS_STR}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         
@@ -96,10 +95,11 @@ jobs:
     - name: Download & stage the latest Release Windows files
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        WZ_LATEST_RELEASE_ASSETS_URLS_STR: ${{ steps.config.outputs.WZ_LATEST_RELEASE_ASSET_URLS }}
+        WZ_LATEST_RELEASE_ASSETS_NAMES_STR: ${{ steps.config.outputs.WZ_LATEST_RELEASE_ASSET_NAMES }}
         WZ_LATEST_RELEASE_ASSETS_ARCHS_STR: ${{ steps.config.outputs.WZ_LATEST_RELEASE_ASSET_ARCHS }}
         STAGING_PATH: ${{ steps.config.outputs.STAGING_PATH }}
         STAGING_FILES_PATH: ${{ steps.config.outputs.STAGING_FILES_PATH }}
+        WZ_LATEST_RELEASE_TAG: ${{ steps.config.outputs.WZ_LATEST_RELEASE_TAG }}
       run: |
         Start-Sleep -Milliseconds 1 # See: https://stackoverflow.com/a/49859001
         
@@ -111,25 +111,22 @@ jobs:
         $VISUAL_STUDIO_INSTALL_PATH = & "vswhere.exe" -latest -property installationPath
         Import-VCVarsEnv "${VISUAL_STUDIO_INSTALL_PATH}" "-arch=x64 -host_arch=x64"
         
-        $WZ_LATEST_RELEASE_ASSETS_URLS = ${env:WZ_LATEST_RELEASE_ASSETS_URLS_STR}.Split('|')
-        echo "WZ_LATEST_RELEASE_ASSETS_URLS = $WZ_LATEST_RELEASE_ASSETS_URLS"
+        $WZ_LATEST_RELEASE_ASSETS_NAMES = ${env:WZ_LATEST_RELEASE_ASSETS_NAMES_STR}.Split('|')
+        echo "WZ_LATEST_RELEASE_ASSETS_NAMES = $WZ_LATEST_RELEASE_ASSETS_NAMES"
         $WZ_LATEST_RELEASE_ASSETS_ARCHS = ${env:WZ_LATEST_RELEASE_ASSETS_ARCHS_STR}.Split('|')
         echo "WZ_LATEST_RELEASE_ASSETS_ARCHS = $WZ_LATEST_RELEASE_ASSETS_ARCHS"
         
         $IsFirstAsset = $true
-        for ($i=0; $i -lt ($WZ_LATEST_RELEASE_ASSETS_URLS.count); $i++)
+        for ($i=0; $i -lt ($WZ_LATEST_RELEASE_ASSETS_NAMES.count); $i++)
         {
-          $Release_Asset_Url = $WZ_LATEST_RELEASE_ASSETS_URLS[$i]
+          $Release_Asset_Name = $WZ_LATEST_RELEASE_ASSETS_NAMES[$i]
           $Release_Asset_Arch = $WZ_LATEST_RELEASE_ASSETS_ARCHS[$i]
           $WINARCHIVE_DL_PATH = "${env:DL_BASEDIR}\windows-archive.zip"
           if (Test-Path "$WINARCHIVE_DL_PATH") { Remove-Item "$WINARCHIVE_DL_PATH" -Force }
-          $WINARCHIVE_DL_URL="$Release_Asset_Url"
           echo "::group::Download Archive ($Release_Asset_Arch)"
           Write-Host "Architecture: `"$Release_Asset_Arch`""
-          Write-Host "Original Url: `"${WINARCHIVE_DL_URL}`""
-          $url = Get-RedirectedUrl "${WINARCHIVE_DL_URL}"
-          Write-Host "Redirected Url: `"$url`""
-          $req = Req -Params @{ 'Method'='GET';'Uri'="$url";'OutFile'="$WINARCHIVE_DL_PATH";'Headers'=@{'Accept' = 'application/octet-stream'; "Authorization" = ("token ${env:GITHUB_TOKEN}")} } -Retries 3 -SecondsDelay 10
+          gh release --repo Warzone2100/warzone2100 download "${WZ_LATEST_RELEASE_TAG}" --pattern "${Release_Asset_Name}" --output "${WINARCHIVE_DL_PATH}" --skip-existing
+          Write-Host "$Release_Asset_Name`n`t-> SHA512: $((Get-FileHash -LiteralPath "$WINARCHIVE_DL_PATH" -Algorithm SHA512).Hash)`n`t`-> Size (bytes): $((Get-Item -LiteralPath "$WINARCHIVE_DL_PATH").Length)"
           echo "::endgroup::"
         
           # Extract the ZIP file to a temporary location
