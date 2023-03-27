@@ -25,12 +25,14 @@ jobs:
         $DL_BASEDIR = "${{ github.workspace }}\dl"
         $STAGING_PATH = "${{ github.workspace }}\build"
         $STAGING_FILES_PATH = "${{ github.workspace }}\build\files"
+        $STAGING_DEBUGSYMBOLS_PATH = "${{ github.workspace }}\symbols"
         $STAGING_OUTPUTS_PATH = "${{ github.workspace }}\build\_outputs"
         $UPLOAD_INSTALL_PATH = "${{ github.workspace }}\upload"
         
         New-Item -ItemType Directory -Force -Path "$DL_BASEDIR"
         New-Item -ItemType Directory -Force -Path "$STAGING_PATH"
         New-Item -ItemType Directory -Force -Path "$STAGING_FILES_PATH"
+        New-Item -ItemType Directory -Force -Path "$STAGING_DEBUGSYMBOLS_PATH"
         New-Item -ItemType Directory -Force -Path "$STAGING_OUTPUTS_PATH"
         New-Item -ItemType Directory -Force -Path "$UPLOAD_INSTALL_PATH"
         
@@ -38,6 +40,7 @@ jobs:
         echo "DL_BASEDIR=${DL_BASEDIR}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         echo "STAGING_PATH=${STAGING_PATH}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         echo "STAGING_FILES_PATH=${STAGING_FILES_PATH}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        echo "STAGING_DEBUGSYMBOLS_PATH=${STAGING_DEBUGSYMBOLS_PATH}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         echo "STAGING_OUTPUTS_PATH=${STAGING_OUTPUTS_PATH}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         echo "UPLOAD_INSTALL_PATH=${UPLOAD_INSTALL_PATH}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         echo "UPLOAD_INSTALL_PATH=${UPLOAD_INSTALL_PATH}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
@@ -53,8 +56,10 @@ jobs:
   
         # Get URLs for all assets (architectures) to package
         $Desired_Asset_Names = @('warzone2100_win_x64_archive.zip','warzone2100_win_arm64_archive.zip')
+        $Desired_DebugSymbols_Names = @('warzone2100_win_x64.DEBUGSYMBOLS.7z', 'warzone2100_win_arm64.DEBUGSYMBOLS.7z')
         $WZ_LATEST_RELEASE_ASSET_NAMES = @()
         $WZ_LATEST_RELEASE_ASSET_ARCHS = @()
+        $WZ_LATEST_DEBUGSYMBOLS_ASSET_NAMES = @()
         foreach ($Desired_Asset_Name in $Desired_Asset_Names)
         {
           $WZ_LATEST_RELEASE_ASSET=($WZ_LATEST_RELEASE_INFO.assets | where { $_.name -eq "$Desired_Asset_Name" })
@@ -63,8 +68,15 @@ jobs:
           $WZ_LATEST_RELEASE_ASSET_ARCHS += "$architecture"
           echo "$architecture=$Desired_Asset_Name"
         }
+        foreach ($Desired_DebugSymbols_Name in $Desired_DebugSymbols_Names)
+        {
+          $WZ_LATEST_DEBUGSYMBOLS_ASSET_NAMES += "$Desired_DebugSymbols_Name"
+          # re-use WZ_LATEST_RELEASE_ASSET_ARCHS set above (just make sure the order is the same)
+        }
         $WZ_LATEST_RELEASE_ASSET_NAMES_STR = $WZ_LATEST_RELEASE_ASSET_NAMES -join "|"
         echo "WZ_LATEST_RELEASE_ASSET_NAMES=${WZ_LATEST_RELEASE_ASSET_NAMES_STR}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        $WZ_LATEST_DEBUGSYMBOLS_ASSET_NAMES_STR = $WZ_LATEST_DEBUGSYMBOLS_ASSET_NAMES -join "|"
+        echo "WZ_LATEST_DEBUGSYMBOLS_ASSET_NAMES=${WZ_LATEST_DEBUGSYMBOLS_ASSET_NAMES_STR}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         $WZ_LATEST_RELEASE_ASSET_ARCHS_STR = $WZ_LATEST_RELEASE_ASSET_ARCHS -join "|"
         echo "WZ_LATEST_RELEASE_ASSET_ARCHS=${WZ_LATEST_RELEASE_ASSET_ARCHS_STR}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         
@@ -203,6 +215,87 @@ jobs:
         echo "::group::Debug Output (Staging Files Directory)"
         Get-ChildItem -Path "${env:STAGING_FILES_PATH}" –Recurse
         echo "::endgroup::"
+    - name: Download debug symbols
+      id: download-debug-symbols
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        WZ_LATEST_DEBUGSYMBOLS_ASSET_NAMES_STR: ${{ steps.config.outputs.WZ_LATEST_DEBUGSYMBOLS_ASSET_NAMES }}
+        WZ_LATEST_RELEASE_ASSETS_ARCHS_STR: ${{ steps.config.outputs.WZ_LATEST_RELEASE_ASSET_ARCHS }}
+        STAGING_PATH: ${{ steps.config.outputs.STAGING_PATH }}
+        STAGING_DEBUGSYMBOLS_PATH: ${{ steps.config.outputs.STAGING_DEBUGSYMBOLS_PATH }}
+        WZ_LATEST_RELEASE_TAG: ${{ steps.config.outputs.WZ_LATEST_RELEASE_TAG }}
+      run: |
+        Start-Sleep -Milliseconds 1 # See: https://stackoverflow.com/a/49859001
+        
+        $VerbosePreference = "Continue"
+        $InformationPreference = "Continue"
+        . "${env:WZ_REPO_PATH}\.ci\powershell\request.ps1"
+        . "${env:WZ_REPO_PATH}\.ci\powershell\checkWZFiles.ps1"
+        . "${env:WZ_REPO_PATH}\.ci\powershell\importVCvars.ps1"
+        $VISUAL_STUDIO_INSTALL_PATH = & "vswhere.exe" -latest -property installationPath
+        Import-VCVarsEnv "${VISUAL_STUDIO_INSTALL_PATH}" "-arch=x64 -host_arch=x64"
+        
+        $WZ_LATEST_DEBUGSYMBOLS_ASSET_NAMES = ${env:WZ_LATEST_DEBUGSYMBOLS_ASSET_NAMES_STR}.Split('|')
+        echo "WZ_LATEST_DEBUGSYMBOLS_ASSET_NAMES = $WZ_LATEST_DEBUGSYMBOLS_ASSET_NAMES"
+        $WZ_LATEST_RELEASE_ASSETS_ARCHS = ${env:WZ_LATEST_RELEASE_ASSETS_ARCHS_STR}.Split('|')
+        echo "WZ_LATEST_RELEASE_ASSETS_ARCHS = $WZ_LATEST_RELEASE_ASSETS_ARCHS"
+        
+        for ($i=0; $i -lt ($WZ_LATEST_DEBUGSYMBOLS_ASSET_NAMES.count); $i++)
+        {
+          $Release_Asset_Name = $WZ_LATEST_DEBUGSYMBOLS_ASSET_NAMES[$i]
+          $Release_Asset_Arch = $WZ_LATEST_RELEASE_ASSETS_ARCHS[$i]
+          $WINARCHIVE_DL_PATH = "${env:DL_BASEDIR}\windows-dbgsym-archive.zip"
+          if (Test-Path "$WINARCHIVE_DL_PATH") { Remove-Item "$WINARCHIVE_DL_PATH" -Force }
+          echo "::group::Download Archive ($Release_Asset_Arch)"
+          Write-Host "Architecture: `"$Release_Asset_Arch`""
+          gh release --repo Warzone2100/warzone2100 download "${WZ_LATEST_RELEASE_TAG}" --pattern "${Release_Asset_Name}" --output "${WINARCHIVE_DL_PATH}" --skip-existing
+          Write-Host "$Release_Asset_Name`n`t-> SHA512: $((Get-FileHash -LiteralPath "$WINARCHIVE_DL_PATH" -Algorithm SHA512).Hash)`n`t`-> Size (bytes): $((Get-Item -LiteralPath "$WINARCHIVE_DL_PATH").Length)"
+          echo "::endgroup::"
+        
+          # Extract the 7Z file to a temporary location
+          echo "::group::Extract Archive ($Release_Asset_Arch)"
+          $TmpExtractLocation = "${env:DL_BASEDIR}\tmp_extract_dbgsym"
+          if (Test-Path "$TmpExtractLocation") { Remove-Item "$TmpExtractLocation" -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path "$TmpExtractLocation"
+          Start-Process "7z" -ArgumentList "x","${WINARCHIVE_DL_PATH}","-o${TmpExtractLocation}","-aos" -Wait
+          Remove-Item "$WINARCHIVE_DL_PATH" -Force
+          echo "::endgroup::"
+          
+          # Only copy the bin folder contents into an architecture-specific subdirectory
+          $fileList = @(Get-ChildItem -Path (Join-Path "$($TmpExtractLocation)" "bin") -File -Recurse)
+          $dirList = @(Get-Item -Path (Join-Path "$($TmpExtractLocation)" "bin"))
+          $dirList += @(Get-ChildItem -Path (Join-Path "$($TmpExtractLocation)" "bin") -Directory -Recurse)
+          
+          foreach ($dirPath in $dirList)
+          {
+            $destinationDirPath = $($dirPath.FullName).Replace("$TmpExtractLocation", "${env:STAGING_DEBUGSYMBOLS_PATH}")
+            if ($destinationDirPath.StartsWith($(Join-Path "${env:STAGING_DEBUGSYMBOLS_PATH}" "bin"))) {
+              # Move the contents of the bin directory into a subdirectory by architecture
+              $destinationDirPath = ($destinationDirPath).Replace($(Join-Path "${env:STAGING_DEBUGSYMBOLS_PATH}" "bin"), $(Join-Path "${env:STAGING_DEBUGSYMBOLS_PATH}" "bin" "$Release_Asset_Arch"))
+            }
+            New-Item "$destinationDirPath" -ItemType Directory -ea SilentlyContinue | Out-Null
+          }
+          foreach ($file in $fileList)
+          {
+            $filePath = $(Split-Path $($file.FullName))
+            $destinationPath = $filePath.Replace("$TmpExtractLocation", "${env:STAGING_DEBUGSYMBOLS_PATH}")
+            if ($filePath.StartsWith($(Join-Path "$TmpExtractLocation" "bin"))) {
+              # Move the contents of the bin directory into a subdirectory by architecture
+              $destinationPath = $filePath.Replace($(Join-Path "$TmpExtractLocation" "bin"), $(Join-Path "${env:STAGING_DEBUGSYMBOLS_PATH}" "bin" "$Release_Asset_Arch"))
+            }
+            Move-Item -Path "$($file.FullName)" -Destination "$destinationPath" -Force -ErrorAction Stop
+          }
+          
+          # Remove temporary extracted folder
+          Write-Host "Deleting temporary extraction folder: '$($TmpExtractLocation)'"
+          Remove-Item "$TmpExtractLocation" -Recurse -Force -ErrorAction Stop
+        }
+        
+        Write-Host "Finished staging debug symbol files"
+        
+        echo "::group::Debug Output (Staging Debug Symbols Directory)"
+        Get-ChildItem -Path "${env:STAGING_DEBUGSYMBOLS_PATH}" –Recurse
+        echo "::endgroup::"
     - name: Download + stage sequences.wz
       id: sequences
       env:
@@ -291,7 +384,7 @@ jobs:
       env:
         WZ_PACKAGING_VERSION: ${{ steps.version.outputs.WZ_PACKAGING_VERSION }}
         WZ_LATEST_RELEASE_ASSETS_ARCHS_STR: ${{ steps.config.outputs.WZ_LATEST_RELEASE_ASSET_ARCHS }}
-        STAGING_FILES_PATH: ${{ steps.config.outputs.STAGING_FILES_PATH }}
+        STAGING_DEBUGSYMBOLS_PATH: ${{ steps.config.outputs.STAGING_DEBUGSYMBOLS_PATH }}
         STAGING_OUTPUTS_PATH: ${{ steps.config.outputs.STAGING_OUTPUTS_PATH }}
       run: |
         $WZ_LATEST_RELEASE_ASSETS_ARCHS = ${env:WZ_LATEST_RELEASE_ASSETS_ARCHS_STR}.Split('|')
@@ -300,7 +393,7 @@ jobs:
         foreach ($arch in $WZ_LATEST_RELEASE_ASSETS_ARCHS)
         {
           echo "::group::Packaging .appxsym (${arch})"
-          $PDB_PATH = $(Join-Path "${env:STAGING_FILES_PATH}" "bin" "${arch}" "warzone2100.pdb")
+          $PDB_PATH = $(Join-Path "${env:STAGING_DEBUGSYMBOLS_PATH}" "bin" "${arch}" "warzone2100.pdb")
           if (-not (Test-Path "${PDB_PATH}"))
           {
             Write-Error "Failed to find expected PDB file: ${PDB_PATH}"
@@ -316,9 +409,11 @@ jobs:
       env:
         STAGING_SEQUENCES_PATH: ${{ steps.sequences.outputs.STAGING_SEQUENCES_PATH }}
         STAGING_FILES_PATH: ${{ steps.config.outputs.STAGING_FILES_PATH }}
+        STAGING_DEBUGSYMBOLS_PATH: ${{ steps.config.outputs.STAGING_DEBUGSYMBOLS_PATH }}
       run: |
         Remove-Item "${env:STAGING_SEQUENCES_PATH}" -Recurse -Force -ErrorAction Stop
         Remove-Item "${env:STAGING_FILES_PATH}" -Recurse -Force -ErrorAction Stop
+        Remove-Item "${env:STAGING_DEBUGSYMBOLS_PATH}" -Recurse -Force -ErrorAction Stop
     - name: 'Validate App (appcert.exe)'
       env:
         STAGING_PATH: ${{ steps.config.outputs.STAGING_PATH }}
